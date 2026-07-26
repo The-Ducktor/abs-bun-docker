@@ -17,13 +17,9 @@ jobs:
           TAG=$(curl -s https://api.github.com/repos/advplyr/audiobookshelf/releases/latest | jq -r .tag_name)
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Skip if already built
-        id: check
-        run: |
-          EXISTS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/user/packages/container/${{ github.event.repository.name }}/versions" 2>/dev/null || echo "000")
-          echo "skip=false" >> "$GITHUB_OUTPUT"  # replace with real check if you want to be strict
+      - name: Lowercase repository name
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout this repo (for Dockerfile.bun)
         uses: actions/checkout@v4
@@ -55,5 +51,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.upstream.outputs.tag }}
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.upstream.outputs.tag }}
+            ghcr.io/${{ steps.repo.outputs.name }}:latest
