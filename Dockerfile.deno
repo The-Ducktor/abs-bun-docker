@@ -1,0 +1,70 @@
+ARG NUSQLITE3_DIR="/usr/local/lib/nusqlite3"
+ARG NUSQLITE3_PATH="${NUSQLITE3_DIR}/libnusqlite3.so"
+
+### STAGE 0: Build client ###
+FROM denoland/deno:alpine AS build-client
+WORKDIR /client
+COPY /client /client
+# nodeModulesDir=auto lets Deno materialize node_modules for npm compat
+RUN deno install --allow-scripts && deno task generate
+
+### STAGE 1: Build server ###
+FROM denoland/deno:alpine AS build-server
+ARG NUSQLITE3_DIR
+ARG TARGETPLATFORM
+ENV NODE_ENV=production
+
+RUN apk add --no-cache --update \
+  curl \
+  unzip
+
+WORKDIR /server
+COPY index.js package* /server
+COPY /server /server/server
+
+RUN case "$TARGETPLATFORM" in \
+  "linux/amd64") \
+  curl -L -o /tmp/library.zip "https://github.com/mikiher/nunicode-sqlite/releases/download/v1.2/libnusqlite3-linux-musl-x64.zip" ;; \
+  "linux/arm64") \
+  curl -L -o /tmp/library.zip "https://github.com/mikiher/nunicode-sqlite/releases/download/v1.2/libnusqlite3-linux-musl-arm64.zip" ;; \
+  *) echo "Unsupported platform: $TARGETPLATFORM" && exit 1 ;; \
+  esac && \
+  unzip /tmp/library.zip -d $NUSQLITE3_DIR && \
+  rm /tmp/library.zip
+
+# --allow-scripts: sqlite3's npm postinstall (prebuild-install/node-gyp) needs to run
+# This materializes a real node_modules/ dir with the compiled sqlite3 .node binding
+RUN deno install --allow-scripts
+
+### STAGE 2: Create minimal runtime image ###
+FROM denoland/deno:alpine
+
+ARG NUSQLITE3_DIR
+ARG NUSQLITE3_PATH
+
+RUN apk add --no-cache --update \
+  tzdata \
+  ffmpeg \
+  tini
+
+WORKDIR /app
+
+COPY --from=build-client /client/dist /app/client/dist
+COPY --from=build-server /server /app
+COPY --from=build-server ${NUSQLITE3_PATH} ${NUSQLITE3_PATH}
+
+EXPOSE 80
+
+ENV PORT=80
+ENV NODE_ENV=production
+ENV CONFIG_PATH="/config"
+ENV METADATA_PATH="/metadata"
+ENV SOURCE="docker"
+ENV NUSQLITE3_DIR=${NUSQLITE3_DIR}
+ENV NUSQLITE3_PATH=${NUSQLITE3_PATH}
+
+ENTRYPOINT ["tini", "--"]
+# --allow-all is the pragmatic choice here: the server needs net/read/write/env/ffi
+# (ffi is required for the sqlite3 native addon bridge). Narrow this down if you
+# want tighter sandboxing once you've confirmed which permissions it actually needs.
+CMD ["deno", "run", "--allow-all", "--unstable-node-globals", "index.js"]
