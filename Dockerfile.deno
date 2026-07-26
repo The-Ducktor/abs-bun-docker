@@ -5,8 +5,7 @@ ARG NUSQLITE3_PATH="${NUSQLITE3_DIR}/libnusqlite3.so"
 FROM denoland/deno:alpine AS build-client
 WORKDIR /client
 COPY /client /client
-# nodeModulesDir=auto lets Deno materialize node_modules for npm compat
-RUN deno install --allow-scripts && deno task generate
+RUN deno install && deno task generate
 
 ### STAGE 1: Build server ###
 FROM denoland/deno:alpine AS build-server
@@ -32,9 +31,13 @@ RUN case "$TARGETPLATFORM" in \
   unzip /tmp/library.zip -d $NUSQLITE3_DIR && \
   rm /tmp/library.zip
 
-# --allow-scripts: sqlite3's npm postinstall (prebuild-install/node-gyp) needs to run
-# This materializes a real node_modules/ dir with the compiled sqlite3 .node binding
-RUN deno install --allow-scripts
+# --node-modules-dir=auto ensures a real node_modules/ is materialized (scripts
+# only run in this mode, per Deno docs). --allow-scripts scoped to sqlite3 only:
+# its postinstall needs to run (node-gyp/prebuild-install) to produce the
+# compiled .node binding. Leaving this unscoped would also trigger postinstall
+# for unrelated packages that may assume a real node binary is present, which
+# isn't the case in this image.
+RUN deno install --node-modules-dir=auto --allow-scripts=npm:sqlite3
 
 ### STAGE 2: Create minimal runtime image ###
 FROM denoland/deno:alpine
