@@ -53,3 +53,5 @@ jobs:
           tags: |
             ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.upstream.outputs.tag }}
             ghcr.io/${{ steps.repo.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
