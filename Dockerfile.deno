@@ -5,6 +5,11 @@ ARG NUSQLITE3_PATH="${NUSQLITE3_DIR}/libnusqlite3.so"
 FROM denoland/deno:alpine AS build-client
 WORKDIR /client
 COPY /client /client
+# Nuxt2/webpack4/vue-loader expect npm's classic flat/hoisted node_modules
+# layout (e.g. vue-loader looks for vue-template-compiler as a flat sibling
+# rather than a declared dependency). Deno's default isolated (.deno/) layout
+# doesn't support that pattern, so force hoisted mode here.
+RUN echo '{"nodeModulesDir":"manual","nodeModulesLinker":"hoisted"}' > deno.json
 RUN deno install && deno task generate
 
 ### STAGE 1: Build server ###
