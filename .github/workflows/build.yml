@@ -6,25 +6,35 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  vars:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.upstream.outputs.tag }}
+      repo: ${{ steps.repo.outputs.name }}
+    steps:
+      - id: upstream
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/advplyr/audiobookshelf/releases/latest | jq -r .tag_name)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: vars
     permissions:
       packages: write
     strategy:
       fail-fast: false
       matrix:
         runtime: [bun, deno]
+        platform: [amd64, arm64]
+        include:
+          - platform: amd64
+            runs-on: ubuntu-latest
+          - platform: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
     steps:
-      - name: Get latest upstream release tag
-        id: upstream
-        run: |
-          TAG=$(curl -s https://api.github.com/repos/advplyr/audiobookshelf/releases/latest | jq -r .tag_name)
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Lowercase repository name
-        id: repo
-        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-
       - name: Checkout this repo (for Dockerfiles)
         uses: actions/checkout@v7
         with:
@@ -34,7 +44,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: advplyr/audiobookshelf
-          ref: ${{ steps.upstream.outputs.tag }}
+          ref: ${{ needs.vars.outputs.tag }}
           path: upstream
 
       - name: Place custom Dockerfile into upstream source
@@ -48,14 +58,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v7
+      - name: Build and push per-arch image (native runner, no QEMU)
+        uses: docker/build-push-action@v7
         with:
           context: ./upstream
           file: ./upstream/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/${{ matrix.platform }}
           push: true
-          tags: |
-            ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.upstream.outputs.tag }}-${{ matrix.runtime }}
-            ghcr.io/${{ steps.repo.outputs.name }}:latest-${{ matrix.runtime }}
-          cache-from: type=gha,scope=${{ matrix.runtime }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.runtime }}
+          tags: ghcr.io/${{ needs.vars.outputs.repo }}:${{ needs.vars.outputs.tag }}-${{ matrix.runtime }}-${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.runtime }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.runtime }}-${{ matrix.platform }}
+
+  merge:
+    needs: [vars, build]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        runtime: [bun, deno]
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        run: |
+          REPO=ghcr.io/${{ needs.vars.outputs.repo }}
+          TAG=${{ needs.vars.outputs.tag }}
+          RUNTIME=${{ matrix.runtime }}
+          docker buildx imagetools create \
+            -t $REPO:$TAG-$RUNTIME \
+            -t $REPO:latest-$RUNTIME \
+            $REPO:$TAG-$RUNTIME-amd64 \
+            $REPO:$TAG-$RUNTIME-arm64
