@@ -2,7 +2,12 @@ ARG NUSQLITE3_DIR="/usr/local/lib/nusqlite3"
 ARG NUSQLITE3_PATH="${NUSQLITE3_DIR}/libnusqlite3.so"
 
 ### STAGE 0: Build client ###
-FROM denoland/deno:alpine AS build-client
+# Uses the glibc (non-alpine) Deno image deliberately: this stage only
+# produces static assets (client/dist), so musl compatibility is irrelevant
+# here. Deno's npm resolver has a known issue correctly matching musl-specific
+# optionalDependencies (e.g. lightningcss-linux-arm64-musl, used by Tailwind's
+# PostCSS plugin) on arm64 — using glibc avoids that resolution bug entirely.
+FROM denoland/deno:debian AS build-client
 WORKDIR /client
 COPY /client /client
 # Nuxt2/webpack4/vue-loader expect npm's classic flat/hoisted node_modules
