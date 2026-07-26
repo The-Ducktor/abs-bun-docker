@@ -1,4 +1,4 @@
-name: Build Bun image on upstream release
+name: Build images on upstream release
 
 on:
   schedule:
@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [bun, deno]
     steps:
       - name: Get latest upstream release tag
         id: upstream
@@ -21,7 +25,7 @@ jobs:
         id: repo
         run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout this repo (for Dockerfile.bun)
+      - name: Checkout this repo (for Dockerfiles)
         uses: actions/checkout@v7
         with:
           path: build-config
@@ -34,7 +38,7 @@ jobs:
           path: upstream
 
       - name: Place custom Dockerfile into upstream source
-        run: cp build-config/Dockerfile.bun upstream/Dockerfile
+        run: cp build-config/Dockerfile.${{ matrix.runtime }} upstream/Dockerfile
 
       - uses: docker/setup-buildx-action@v4
 
@@ -51,7 +55,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.upstream.outputs.tag }}
-            ghcr.io/${{ steps.repo.outputs.name }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.upstream.outputs.tag }}-${{ matrix.runtime }}
+            ghcr.io/${{ steps.repo.outputs.name }}:latest-${{ matrix.runtime }}
+          cache-from: type=gha,scope=${{ matrix.runtime }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.runtime }}
